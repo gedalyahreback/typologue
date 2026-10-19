@@ -1,8 +1,8 @@
-# Fontity Serific
+# Typologue
 
 **Status: work-in-progress prototype — not yet a working desktop MVP.**
 
-Fontity Serific is an experimental Python tool for inspecting variable font axes and exporting static instances. The longer-term goal is a macOS desktop app that detects related font styles, helps merge families, and produces editable variable-font source packages.
+Typologue is an experimental Python tool for inspecting variable font axes and exporting static instances. The longer-term goal is a macOS desktop app that detects related font styles, helps merge families, and produces editable variable-font source packages.
 
 ## Current source
 
