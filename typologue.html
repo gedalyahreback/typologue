@@ -1,0 +1,288 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Typologue</title>
+<style>
+  body { font: 16px system-ui, sans-serif; color: #192535; background: #eef2f5; margin: 0; }
+  main { max-width: 1050px; margin: auto; padding: 2rem 1rem; }
+  section { background: white; border: 1px solid #c9d3df; border-radius: .6rem; padding: 1rem; margin: 1rem 0; }
+  h1, h2 { margin: 0 0 .6rem; }
+  label { display: inline-block; margin: .4rem .8rem .4rem 0; }
+  input, select, button { font: inherit; max-width: 100%; }
+  button { cursor: pointer; padding: .3rem .65rem; }
+  button:disabled { cursor: default; }
+  #cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(215px, 1fr)); gap: .7rem; }
+  article { border: 1px solid #c9d3df; padding: .7rem; border-radius: .4rem; overflow-wrap: anywhere; }
+  svg { width: 100%; display: block; background: #f5f8fb; }
+  #overlay { max-width: 500px; margin-top: 1rem; }
+  #sketch { max-width: 500px; touch-action: none; cursor: crosshair; }
+  .guide { stroke: #8598ad; stroke-dasharray: 5 4; vector-effect: non-scaling-stroke; }
+  #status { min-height: 1.5em; }
+</style>
+<main>
+<h1>Typologue</h1>
+<p>Inspect, compare, sketch, and export fonts locally.</p>
+<section>
+  <h2>Inspect &amp; Compare</h2>
+  <form id="inspect">
+    <label>Font files <input id="fonts" type="file" accept=".ttf,.otf" multiple required></label>
+    <label>Character <input id="character" value="א" size="4" required></label>
+    <button>Inspect</button>
+  </form>
+  <p>Outlines share an em size, baseline, and horizontal origin. Choose a reference and a second font to overlay.</p>
+  <div id="cards"></div>
+  <label>Reference <select id="reference" disabled></select></label>
+  <label>Compare with <select id="comparison" disabled></select></label>
+  <div id="overlay"></div>
+</section>
+<section>
+  <h2>Sketch Glyph</h2>
+  <p>Draw freehand, undo a stroke, or export the sketch as SVG.</p>
+  <svg id="sketch" viewBox="0 0 500 420" aria-label="Glyph sketch canvas">
+    <path class="guide" d="M0 85H500 M0 330H500 M250 0V420"></path>
+    <g id="ink" fill="none" stroke="#16263d" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"></g>
+  </svg>
+  <button id="undo">Undo</button>
+  <button id="clear">Clear</button>
+  <button id="saveSketch">Download SVG</button>
+</section>
+<section>
+  <h2>Font Family &amp; Export</h2>
+  <label>Source font <select id="source" disabled></select></label>
+  <div id="axes"></div>
+  <label>Geometric slant in degrees <input id="slant" type="number" value="0" min="-45" max="45" step="any"></label>
+  <div>
+    <button id="instance" disabled>Download Static Instance</button>
+    <button id="sources" disabled>Download UFO &amp; Designspace</button>
+  </div>
+  <p>UFO export includes editable outlines at the default and individual axis extremes.</p>
+  <h3>Build a Weight Family</h3>
+  <p>Select exactly two compatible static TrueType masters above, in light-to-heavy order. The first master is the default.</p>
+  <form id="merge">
+    <label>First weight <input id="firstWeight" type="number" min="1" max="1000" value="400" required></label>
+    <label>Second weight <input id="secondWeight" type="number" min="1" max="1000" value="700" required></label>
+    <button id="mergeButton" disabled>Build Variable Font</button>
+  </form>
+</section>
+<p id="status" role="status" aria-live="polite"></p>
+</main>
+<script>
+const byId = id => document.getElementById(id);
+const svgNS = "http://www.w3.org/2000/svg";
+const colors = ["#174f86", "#b5334a"];
+let fonts = [];
+let results = [];
+
+function svgNode(name, attributes) {
+  const node = document.createElementNS(svgNS, name);
+  for (const [key, value] of Object.entries(attributes)) node.setAttribute(key, value);
+  return node;
+}
+
+function makePreview(entries, viewBox) {
+  const svg = svgNode("svg", {viewBox, role: "img",
+    "aria-label": entries.map(result => result.name).join(" and ")});
+  const [left, , width] = viewBox.split(" ").map(Number);
+  svg.append(svgNode("path", {d: `M${left} 0h${width} M0 -1300V500`, class: "guide"}));
+  entries.forEach((result, index) => {
+    const scale = 1000 / result.em;
+    svg.append(svgNode("path", {d: result.glyph.path, transform: `scale(${scale},${-scale})`,
+      fill: entries.length === 1 ? colors[index] : "none", stroke: colors[index % colors.length],
+      "stroke-width": 2, "vector-effect": "non-scaling-stroke"}));
+  });
+  return svg;
+}
+
+function renderPreviews() {
+  const glyphs = results.filter(result => result.glyph);
+  // Measure the actual paths so wide forms and accents remain visible.
+  const probe = makePreview(glyphs, "-100 -1100 1200 1400");
+  const cards = byId("cards");
+  cards.replaceChildren(probe);
+  let left = -100, top = -1100, right = 1100, bottom = 300;
+  [...probe.children].slice(1).forEach((path, index) => {
+    const bounds = path.getBBox();
+    const scale = 1000 / glyphs[index].em;
+    left = Math.min(left, bounds.x * scale - 50);
+    right = Math.max(right, (bounds.x + bounds.width) * scale + 50);
+    top = Math.min(top, -(bounds.y + bounds.height) * scale - 50);
+    bottom = Math.max(bottom, -bounds.y * scale + 50);
+  });
+  const viewBox = [left, top, right - left, bottom - top].join(" ");
+  cards.replaceChildren();
+  results.forEach((result, index) => {
+    const card = document.createElement("article");
+    const title = document.createElement("strong");
+    title.textContent = result.name || fonts[index].name;
+    const detail = document.createElement("p");
+    detail.textContent = result.error || (result.glyph
+      ? `${result.glyph.name} · advance ${Math.round(result.glyph.width / result.em * 1000)}/1000 em · ${result.count} glyphs`
+      : `Missing glyph · ${result.count} glyphs`);
+    card.append(title, detail);
+    if (result.glyph) card.append(makePreview([result], viewBox));
+    cards.append(card);
+  });
+  function overlay() {
+    const first = results[byId("reference").value];
+    const second = results[byId("comparison").value];
+    byId("overlay").replaceChildren();
+    if (!first || !second || first === second) return;
+    const caption = document.createElement("p");
+    caption.textContent = `Blue · ${first.name} / Red · ${second.name}`;
+    byId("overlay").append(caption, makePreview([first, second], viewBox));
+  }
+  for (const id of ["reference", "comparison"]) {
+    const select = byId(id);
+    const previous = select.value;
+    select.replaceChildren();
+    results.forEach((result, index) => {
+      if (result.glyph) select.add(new Option(result.name || fonts[index].name, index));
+    });
+    select.disabled = select.options.length < 2;
+    if ([...select.options].some(option => option.value === previous)) select.value = previous;
+    else if (id === "comparison" && select.options.length > 1) select.selectedIndex = 1;
+    select.onchange = overlay;
+  }
+  overlay();
+}
+
+function fileData(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error(`Could not read ${file.name}.`));
+    reader.onload = () => resolve(reader.result.split(",", 2)[1]);
+    reader.readAsDataURL(file);
+  });
+}
+
+async function request(operation, files, fields) {
+  if (files.reduce((total, file) => total + file.size, 0) >= 36_000_000)
+    throw new Error("Choose font files totaling less than 36 MB.");
+  const response = await fetch("/" + operation, {
+    method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({...fields, fonts: await Promise.all(files.map(fileData))})
+  });
+  if (!response.ok) throw new Error(await response.text());
+  return response;
+}
+
+async function run(button, task) {
+  button.disabled = true;
+  byId("status").textContent = "Working…";
+  try {
+    byId("status").textContent = await task();
+  } catch (error) {
+    byId("status").textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
+}
+
+byId("inspect").onsubmit = event => {
+  event.preventDefault();
+  run(event.submitter, async () => {
+    const selected = [...byId("fonts").files];
+    const character = byId("character").value;
+    const response = await request("inspect", selected, {character});
+    results = await response.json();
+    fonts = selected;
+    renderPreviews();
+    const source = byId("source");
+    source.replaceChildren();
+    results.forEach((result, index) => {
+      if (!result.error) source.add(new Option(result.name || fonts[index].name, index));
+    });
+    source.disabled = !source.options.length;
+    byId("mergeButton").disabled = results.length !== 2 ||
+      results.some(result => result.error || result.axes.length);
+    renderAxes();
+    return `Inspected ${character} in ${fonts.length} font file(s).`;
+  });
+};
+
+function renderAxes() {
+  const source = results[byId("source").value];
+  byId("axes").replaceChildren();
+  byId("instance").disabled = !source?.axes.length;
+  byId("sources").disabled = !source;
+  for (const axis of source?.axes || []) {
+    const label = document.createElement("label");
+    label.textContent = axis.tag + " ";
+    const input = document.createElement("input");
+    Object.assign(input, {type: "number", min: axis.min, max: axis.max,
+      step: "any", value: axis.default, name: axis.tag, required: true});
+    label.append(input);
+    byId("axes").append(label);
+  }
+}
+byId("source").onchange = renderAxes;
+
+function download(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+for (const operation of ["instance", "sources"]) {
+  byId(operation).onclick = event => run(event.currentTarget, async () => {
+    const index = byId("source").value;
+    const inputs = [...byId("axes").querySelectorAll("input")];
+    if (operation === "instance" && ![...inputs, byId("slant")].every(input => input.reportValidity()))
+      return "Check the export values.";
+    const response = await request(operation, [fonts[index]], {
+      location: Object.fromEntries(inputs.map(input => [input.name, input.value])),
+      slant: byId("slant").value
+    });
+    const blob = await response.blob();
+    const extension = operation === "sources" ? "zip" : blob.type === "font/otf" ? "otf" : "ttf";
+    download(blob, `typologue-${operation}.${extension}`);
+    return "Export ready.";
+  }).finally(renderAxes);
+}
+
+byId("merge").onsubmit = event => {
+  event.preventDefault();
+  run(event.submitter, async () => {
+    const weights = [byId("firstWeight").value, byId("secondWeight").value];
+    const response = await request("merge", fonts, {weights});
+    download(await response.blob(), "typologue-variable.ttf");
+    return "Variable font ready.";
+  });
+};
+
+const sketch = byId("sketch");
+const ink = byId("ink");
+let stroke = null;
+let pointer = null;
+function point(event) {
+  const position = new DOMPoint(event.clientX, event.clientY)
+    .matrixTransform(sketch.getScreenCTM().inverse());
+  return `${position.x.toFixed(1)} ${position.y.toFixed(1)}`;
+}
+sketch.onpointerdown = event => {
+  if (pointer !== null || event.button !== 0) return;
+  pointer = event.pointerId;
+  sketch.setPointerCapture(pointer);
+  const start = point(event);
+  stroke = svgNode("path", {d: `M${start} L${start}`});
+  ink.append(stroke);
+};
+sketch.onpointermove = event => {
+  if (event.pointerId === pointer)
+    stroke.setAttribute("d", stroke.getAttribute("d") + " L" + point(event));
+};
+sketch.onlostpointercapture = event => {
+  if (event.pointerId === pointer) pointer = stroke = null;
+};
+byId("undo").onclick = () => ink.lastElementChild?.remove();
+byId("clear").onclick = () => ink.replaceChildren();
+byId("saveSketch").onclick = () => {
+  const svg = svgNode("svg", {viewBox: sketch.getAttribute("viewBox")});
+  svg.append(ink.cloneNode(true));
+  download(new Blob([new XMLSerializer().serializeToString(svg)], {type: "image/svg+xml"}), "glyph.svg");
+};
+</script>
